@@ -111,7 +111,11 @@ class OpenXRSession:
         # VR display components (optional)
         self._vr_display: VRCameraDisplay | None = None
         self._camera_source: CameraStream | None = None
-        self._gl_handles: tuple | None = None  # (hwnd, hdc, hglrc) on Windows
+        self._gl_handles: tuple | None = None  # (window, hdc, hglrc) on Windows
+
+        # Session state tracking
+        self._session_state = None
+        self._session_begun = False
 
     @property
     def is_connected(self) -> bool:
@@ -144,10 +148,9 @@ class OpenXRSession:
 
         logger.info("Initializing OpenXR session for Quest 2 controller tracking...")
 
-        # Enable OpenGL extension if VR display is requested
-        extensions = []
-        if self._enable_display:
-            extensions.append("XR_KHR_opengl_enable")
+        # Most OpenXR runtimes (SteamVR, Oculus) require a graphics binding even
+        # for controller-only sessions. Always enable the OpenGL extension.
+        extensions = ["XR_KHR_opengl_enable"]
 
         # Create OpenXR instance
         self._instance = xr.create_instance(
@@ -166,14 +169,8 @@ class OpenXRSession:
             xr.SystemGetInfo(form_factor=xr.FormFactor.HEAD_MOUNTED_DISPLAY),
         )
 
-        # Create session (with or without graphics binding)
-        if self._enable_display:
-            self._create_session_with_graphics(xr, system_id)
-        else:
-            self._session = xr.create_session(
-                self._instance,
-                xr.SessionCreateInfo(system_id=system_id),
-            )
+        # Create session with OpenGL graphics binding (required by most runtimes)
+        self._create_session_with_graphics(xr, system_id)
 
         # Create reference space (LOCAL = seated, STAGE = room-scale)
         self._space = xr.create_reference_space(
@@ -192,7 +189,7 @@ class OpenXRSession:
             self._vr_display.setup(self._session, self._space)
 
         # Release GL context from main thread so background thread can acquire it
-        if self._enable_display and self._gl_handles:
+        if self._gl_handles:
             from .vr_display import release_gl_context_from_thread
             release_gl_context_from_thread()
 
@@ -209,34 +206,54 @@ class OpenXRSession:
 
         from .vr_display import create_gl_context
 
+        # Create an offscreen OpenGL context (uses GLFW, returns window + Win32 handles)
+        gl_result = create_gl_context()
+        self._gl_handles = gl_result  # (window_or_hwnd, hdc, hglrc)
+
         system = platform.system()
-        if system != "Windows":
-            raise RuntimeError(
-                "VR display currently requires Windows with Quest Link. "
-                f"Detected platform: {system}"
+        if system == "Windows":
+            _, hdc, hglrc = gl_result
+            if hdc is None or hglrc is None:
+                raise RuntimeError(
+                    "Failed to get Win32 GL handles. "
+                    "VR display requires Windows with Quest Link."
+                )
+            # Create OpenGL graphics binding for the OpenXR session
+            # pyopenxr expects HDC (wintypes.HDC = c_void_p) and HGLRC (PyOpenGL HANDLE)
+            from ctypes import wintypes
+            from OpenGL.raw.WGL._types import HANDLE as HGLRC
+
+            graphics_binding = xr.GraphicsBindingOpenGLWin32KHR(
+                h_dc=wintypes.HDC(hdc),
+                h_glrc=HGLRC(hglrc),
             )
 
-        # Create an offscreen OpenGL context
-        hwnd, hdc, hglrc = create_gl_context()
-        self._gl_handles = (hwnd, hdc, hglrc)
+            # Must query graphics requirements before creating session (OpenXR spec)
+            graphics_requirements = xr.get_opengl_graphics_requirements_khr(
+                self._instance, system_id
+            )
+            logger.debug(
+                f"OpenGL requirements: min={graphics_requirements.min_api_version_supported}, "
+                f"max={graphics_requirements.max_api_version_supported}"
+            )
 
-        # Create OpenGL graphics binding for the OpenXR session
-        graphics_binding = xr.GraphicsBindingOpenGLWin32KHR(
-            h_dc=ctypes.c_void_p(hdc),
-            h_glrc=ctypes.c_void_p(hglrc),
-        )
-
-        # Create session with the graphics binding in the next chain
-        self._session = xr.create_session(
-            self._instance,
-            xr.SessionCreateInfo(
-                system_id=system_id,
-                next=ctypes.cast(
-                    ctypes.pointer(graphics_binding),
-                    ctypes.c_void_p,
+            # Create session with the graphics binding in the next chain
+            self._session = xr.create_session(
+                self._instance,
+                xr.SessionCreateInfo(
+                    system_id=system_id,
+                    next=ctypes.cast(
+                        ctypes.pointer(graphics_binding),
+                        ctypes.c_void_p,
+                    ),
                 ),
-            ),
-        )
+            )
+        else:
+            raise RuntimeError(
+                f"OpenXR with OpenGL binding not yet supported on {system}. "
+                "Use Windows with Quest Link."
+            )
+
         logger.info("OpenXR session created with OpenGL graphics binding")
 
     def _setup_actions(self) -> None:
@@ -381,12 +398,13 @@ class OpenXRSession:
 
         interval = 1.0 / self._polling_rate_hz
 
-        # If VR display is enabled, make the GL context current on this thread
-        if self._enable_display and self._gl_handles:
+        # Make the GL context current on this background thread
+        if self._gl_handles:
             from .vr_display import make_gl_context_current
-            _, hdc, hglrc = self._gl_handles
+            gl_window, hdc, hglrc = self._gl_handles
             try:
-                make_gl_context_current(hdc, hglrc)
+                # Always use GLFW window for context management (handles thread transfer)
+                make_gl_context_current(gl_window)
             except RuntimeError:
                 logger.warning("Failed to activate GL context on poll thread; VR display disabled")
                 self._vr_display = None
@@ -396,13 +414,18 @@ class OpenXRSession:
             try:
                 # Poll OpenXR events
                 while True:
-                    event_buffer = xr.EventDataBuffer()
-                    result = xr.poll_event(self._instance, event_buffer)
-                    if result == xr.Result.EVENT_UNAVAILABLE:
+                    try:
+                        event_buffer = xr.poll_event(self._instance)
+                    except xr.EventUnavailable:
                         break
-                    # Handle session state changes if needed
+                    # Handle session state changes
                     if event_buffer.type == xr.StructureType.EVENT_DATA_SESSION_STATE_CHANGED:
-                        state_event = xr.cast(event_buffer, xr.EventDataSessionStateChanged)
+                        state_event = ctypes.cast(
+                            ctypes.byref(event_buffer),
+                            ctypes.POINTER(xr.EventDataSessionStateChanged),
+                        ).contents
+                        logger.info(f"OpenXR session state changed to: {state_event.state}")
+                        self._session_state = state_event.state
                         if state_event.state == xr.SessionState.READY:
                             xr.begin_session(
                                 self._session,
@@ -410,26 +433,42 @@ class OpenXRSession:
                                     primary_view_configuration_type=xr.ViewConfigurationType.PRIMARY_STEREO,
                                 ),
                             )
+                            self._session_begun = True
+                            logger.info("OpenXR session begun")
+                        elif state_event.state == xr.SessionState.STOPPING:
+                            xr.end_session(self._session)
+                            logger.info("OpenXR session ended")
+                            self._running = False
+                            break
+
+                if not self._running:
+                    break
+
+                # Only do frame/action sync after begin_session has been called
+                if not hasattr(self, '_session_begun') or not self._session_begun:
+                    time.sleep(interval)
+                    continue
 
                 # Wait for frame (required by OpenXR even if we're not rendering)
                 frame_state = xr.wait_frame(self._session, xr.FrameWaitInfo())
                 xr.begin_frame(self._session, xr.FrameBeginInfo())
 
-                # Sync actions
-                xr.sync_actions(
-                    self._session,
-                    xr.ActionsSyncInfo(active_action_sets=[
-                        xr.ActiveActionSet(action_set=self._action_set),
-                    ]),
-                )
+                # Sync actions and read controllers only when FOCUSED
+                if self._session_state == xr.SessionState.FOCUSED:
+                    xr.sync_actions(
+                        self._session,
+                        xr.ActionsSyncInfo(active_action_sets=[
+                            xr.ActiveActionSet(action_set=self._action_set),
+                        ]),
+                    )
 
-                # Read controller states
-                now = time.perf_counter()
-                for hand, state_attr in [("left", "_left_state"), ("right", "_right_state")]:
-                    state = self._read_controller(hand, frame_state.predicted_display_time)
-                    state.timestamp = now
-                    with self._lock:
-                        setattr(self, state_attr, state)
+                    # Read controller states
+                    now = time.perf_counter()
+                    for hand, state_attr in [("left", "_left_state"), ("right", "_right_state")]:
+                        state = self._read_controller(hand, frame_state.predicted_display_time)
+                        state.timestamp = now
+                        with self._lock:
+                            setattr(self, state_attr, state)
 
                 # Render camera frame to VR display (if attached)
                 layers = []

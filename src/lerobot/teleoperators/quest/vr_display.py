@@ -70,41 +70,93 @@ def create_gl_context():
     """
     Create a minimal offscreen OpenGL context for the current platform.
 
-    Returns platform-specific handles needed for OpenXR graphics binding.
-    On Windows: (hwnd, hdc, hglrc)
+    Uses GLFW for cross-platform GL context creation. Returns platform-specific
+    handles needed for the OpenXR graphics binding.
+
+    On Windows: (glfw_window, hdc, hglrc)
     """
-    system = platform.system()
-    if system == "Windows":
-        return _create_wgl_context()
-    else:
+    try:
+        return _create_glfw_context()
+    except Exception as e:
+        logger.warning(f"GLFW context creation failed: {e}")
+        system = platform.system()
+        if system == "Windows":
+            return _create_wgl_context()
         raise RuntimeError(
-            f"VR display is not yet supported on {system}. "
-            "Use Windows with Quest Link for camera-to-VR display."
+            f"Failed to create OpenGL context: {e}\n"
+            "Ensure your GPU drivers are up to date."
         )
 
 
 def release_gl_context_from_thread():
     """Release the GL context from the calling thread (for transfer to another thread)."""
-    if platform.system() == "Windows":
-        ctypes.windll.opengl32.wglMakeCurrent(None, None)
+    try:
+        import glfw
+        glfw.make_context_current(None)
+    except Exception:
+        if platform.system() == "Windows":
+            ctypes.windll.opengl32.wglMakeCurrent(None, None)
 
 
-def make_gl_context_current(hdc, hglrc):
+def make_gl_context_current(hdc_or_window, hglrc=None):
     """Make the GL context current on the calling thread."""
-    if platform.system() == "Windows":
-        if not ctypes.windll.opengl32.wglMakeCurrent(hdc, hglrc):
+    if hglrc is None:
+        # hdc_or_window is a GLFW window
+        import glfw
+        glfw.make_context_current(hdc_or_window)
+    elif platform.system() == "Windows":
+        if not ctypes.windll.opengl32.wglMakeCurrent(hdc_or_window, hglrc):
             raise RuntimeError("Failed to make WGL context current on thread")
 
 
-def destroy_gl_context(hwnd, hdc, hglrc):
+def destroy_gl_context(window_or_hwnd, hdc=None, hglrc=None):
     """Destroy the GL context and associated window."""
-    if platform.system() == "Windows":
+    if hdc is None and hglrc is None:
+        # GLFW window
+        try:
+            import glfw
+            glfw.destroy_window(window_or_hwnd)
+            glfw.terminate()
+        except Exception:
+            pass
+    elif platform.system() == "Windows":
         opengl32 = ctypes.windll.opengl32
         user32 = ctypes.windll.user32
         opengl32.wglMakeCurrent(None, None)
         opengl32.wglDeleteContext(hglrc)
-        user32.ReleaseDC(hwnd, hdc)
-        user32.DestroyWindow(hwnd)
+        user32.ReleaseDC(window_or_hwnd, hdc)
+        user32.DestroyWindow(window_or_hwnd)
+
+
+def _create_glfw_context():
+    """Create an offscreen OpenGL context using GLFW (cross-platform)."""
+    import glfw
+
+    if not glfw.init():
+        raise RuntimeError("Failed to initialize GLFW")
+
+    glfw.window_hint(glfw.VISIBLE, False)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+
+    window = glfw.create_window(1, 1, "LeRobot VR Display", None, None)
+    if not window:
+        glfw.terminate()
+        raise RuntimeError("Failed to create GLFW window")
+
+    glfw.make_context_current(window)
+
+    if platform.system() == "Windows":
+        # Extract Win32 handles for OpenXR graphics binding
+        native_window = glfw.get_win32_window(window)
+        hdc = ctypes.windll.user32.GetDC(native_window)
+        hglrc = ctypes.windll.opengl32.wglGetCurrentContext()
+        logger.info(f"Created OpenGL context via GLFW (WGL hdc={hdc}, hglrc={hglrc})")
+        # Return GLFW window as first element (for cleanup), plus Win32 handles
+        return window, hdc, hglrc
+    else:
+        logger.info("Created OpenGL context via GLFW")
+        return (window, None, None)
 
 
 class _PIXELFORMATDESCRIPTOR(ctypes.Structure):
