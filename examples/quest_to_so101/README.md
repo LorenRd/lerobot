@@ -25,7 +25,7 @@ Control an SO-101 robot arm using a Meta Quest 2 VR right-hand controller with 6
 pip install lerobot[quest]
 ```
 
-This installs `pyopenxr>=1.1.0` alongside the base LeRobot dependencies.
+This installs `pyopenxr>=1.1.0` and `PyOpenGL>=3.1.0` alongside the base LeRobot dependencies.
 
 ## Setup
 
@@ -42,6 +42,16 @@ This installs `pyopenxr>=1.1.0` alongside the base LeRobot dependencies.
 cd examples/quest_to_so101
 python teleoperate.py
 ```
+
+### Teleoperation with Camera-to-VR Display
+```bash
+python teleoperate.py --camera
+python teleoperate.py --camera --camera-index 1  # Use second USB camera
+```
+
+When `--camera` is enabled, the arm-mounted USB camera feed is rendered as a
+floating 2D panel in the Quest 2 headset, giving the operator a first-person
+view of the robot workspace.
 
 Edit `teleoperate.py` to set your `ROBOT_PORT` and `URDF_PATH`.
 
@@ -80,6 +90,11 @@ Key parameters in `QuestTeleoperatorConfig`:
 | `smoothing_alpha` | 0.2 | EMA smoothing (0=none, 1=max) |
 | `clutch_threshold` | 0.3 | Index trigger threshold for clutch activation |
 | `gripper_threshold` | 0.5 | Grip trigger threshold for gripper close |
+| `enable_camera_display` | False | Enable camera-to-VR headset display |
+| `camera_index` | 0 | USB camera device index or path |
+| `vr_display_distance` | 1.0 | Distance of VR display panel from user (meters) |
+| `vr_display_width` | 0.6 | Width of VR display panel (meters) |
+| `vr_display_height` | 0.45 | Height of VR display panel (meters) |
 
 ## Architecture
 
@@ -102,6 +117,17 @@ InverseKinematicsEEToJoints (IK solver via placo)
     │  → {shoulder_pan.pos, shoulder_lift.pos, ..., gripper.pos}
     ▼
 SO-101 Follower (serial motor commands)
+
+--- Camera-to-VR Display (optional, --camera flag) ---
+
+USB Camera (arm-mounted) → CameraStream (background capture thread)
+    │
+    ▼
+VRCameraDisplay → OpenXR swapchain texture upload
+    │
+    ▼
+OpenXR quad composition layer → Quest 2 headset display
+    (floating 2D panel in front of user)
 ```
 
 ## Troubleshooting
@@ -109,9 +135,12 @@ SO-101 Follower (serial motor commands)
 | Issue | Solution |
 |-------|----------|
 | "pyopenxr not found" | Run `pip install pyopenxr>=1.1.0` |
+| "PyOpenGL not found" (camera mode) | Run `pip install PyOpenGL>=3.1.0` |
 | "No OpenXR runtime" | Install Oculus app (Windows) or Monado (Linux) |
 | Controller not tracking | Ensure Quest Link is active, headset is on |
 | Arm moves too fast/slow | Adjust `position_scale` in config |
 | Arm shakes/jitters | Increase `smoothing_alpha` (e.g., 0.3-0.5) |
 | IK solver fails | Reduce `MAX_EE_STEP_M`, check URDF path |
 | Robot doesn't move | Check serial port, verify calibration |
+| Camera display not showing | Check USB camera connection, try `--camera-index 1` |
+| Camera display laggy | Reduce `camera_width`/`camera_height` or `camera_fps` |

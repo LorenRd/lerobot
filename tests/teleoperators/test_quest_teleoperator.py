@@ -31,6 +31,7 @@ from lerobot.teleoperators.quest.coordinate_transform import (
     vr_to_robot_rotvec,
 )
 from lerobot.teleoperators.quest.openxr_session import ControllerState
+from lerobot.teleoperators.quest.vr_display import VRDisplayConfig
 from lerobot.utils.rotation import Rotation
 
 
@@ -66,6 +67,63 @@ class TestQuestTeleoperatorConfig:
     def test_config_type(self):
         config = QuestTeleoperatorConfig()
         assert config.type == "quest"
+
+    def test_camera_display_config_defaults(self):
+        config = QuestTeleoperatorConfig()
+        assert config.enable_camera_display is False
+        assert config.camera_index == 0
+        assert config.camera_width == 640
+        assert config.camera_height == 480
+        assert config.camera_fps == 30
+        assert config.vr_display_width == 0.6
+        assert config.vr_display_height == 0.45
+        assert config.vr_display_distance == 1.0
+        assert config.vr_display_offset_y == -0.2
+
+    def test_camera_display_config_custom(self):
+        config = QuestTeleoperatorConfig(
+            enable_camera_display=True,
+            camera_index=1,
+            camera_width=1280,
+            camera_height=720,
+            vr_display_distance=1.5,
+        )
+        assert config.enable_camera_display is True
+        assert config.camera_index == 1
+        assert config.camera_width == 1280
+        assert config.camera_height == 720
+        assert config.vr_display_distance == 1.5
+
+
+# ========================
+# VR Display Config Tests
+# ========================
+
+
+class TestVRDisplayConfig:
+    def test_default_config(self):
+        config = VRDisplayConfig()
+        assert config.enabled is False
+        assert config.display_width == 0.6
+        assert config.display_height == 0.45
+        assert config.display_distance == 1.0
+        assert config.display_offset_y == -0.2
+        assert config.texture_width == 640
+        assert config.texture_height == 480
+
+    def test_custom_config(self):
+        config = VRDisplayConfig(
+            enabled=True,
+            display_width=0.8,
+            display_distance=1.5,
+            texture_width=1280,
+            texture_height=720,
+        )
+        assert config.enabled is True
+        assert config.display_width == 0.8
+        assert config.display_distance == 1.5
+        assert config.texture_width == 1280
+        assert config.texture_height == 720
 
 
 # ========================

@@ -80,6 +80,10 @@ class QuestTeleoperator(Teleoperator):
         self._smoothed_pos: np.ndarray | None = None
         self._smoothed_rot: Rotation | None = None
 
+        # Camera-to-VR display components (initialized in connect() if enabled)
+        self._camera_stream = None
+        self._vr_display = None
+
     @property
     def action_features(self) -> dict[str, type]:
         return {
@@ -106,7 +110,38 @@ class QuestTeleoperator(Teleoperator):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """Initialize OpenXR session and begin controller tracking."""
-        self._session = OpenXRSession(polling_rate_hz=self.config.polling_rate_hz)
+        enable_display = self.config.enable_camera_display
+        self._session = OpenXRSession(
+            polling_rate_hz=self.config.polling_rate_hz,
+            enable_display=enable_display,
+        )
+
+        # Set up camera-to-VR display if enabled
+        if enable_display:
+            from .camera_stream import CameraStream, CameraStreamConfig
+            from .vr_display import VRCameraDisplay, VRDisplayConfig
+
+            cam_config = CameraStreamConfig(
+                camera_index=self.config.camera_index,
+                capture_width=self.config.camera_width,
+                capture_height=self.config.camera_height,
+                capture_fps=self.config.camera_fps,
+            )
+            self._camera_stream = CameraStream(cam_config)
+            self._camera_stream.connect()
+
+            display_config = VRDisplayConfig(
+                enabled=True,
+                display_width=self.config.vr_display_width,
+                display_height=self.config.vr_display_height,
+                display_distance=self.config.vr_display_distance,
+                display_offset_y=self.config.vr_display_offset_y,
+                texture_width=self.config.camera_width,
+                texture_height=self.config.camera_height,
+            )
+            self._vr_display = VRCameraDisplay(display_config)
+            self._session.attach_camera_display(self._vr_display, self._camera_stream)
+
         self._session.connect()
 
         logger.info(
@@ -297,10 +332,17 @@ class QuestTeleoperator(Teleoperator):
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        """Disconnect from the Quest controller and clean up OpenXR session."""
+        """Disconnect from the Quest controller and clean up all resources."""
+        if self._camera_stream is not None:
+            self._camera_stream.disconnect()
+            self._camera_stream = None
+
+        self._vr_display = None  # Cleaned up by OpenXRSession.disconnect()
+
         if self._session is not None:
             self._session.disconnect()
             self._session = None
+
         self._clutch_engaged = False
         self._smoothed_pos = None
         self._smoothed_rot = None

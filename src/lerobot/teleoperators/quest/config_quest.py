@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from ..config import TeleoperatorConfig
 
@@ -51,3 +52,21 @@ class QuestTeleoperatorConfig(TeleoperatorConfig):
 
     # OpenXR polling rate in Hz (Quest 2 native refresh: 72/90/120 Hz)
     polling_rate_hz: float = 90.0
+
+    # --- Camera-to-VR Display ---
+    # Enable camera feed display in the Quest 2 headset
+    enable_camera_display: bool = False
+    # Camera device index or path (e.g., 0 for first USB camera)
+    camera_index: int | str = 0
+    # Camera capture resolution
+    camera_width: int = 640
+    camera_height: int = 480
+    # Camera capture FPS
+    camera_fps: int = 30
+    # VR display panel size in meters
+    vr_display_width: float = 0.6
+    vr_display_height: float = 0.45
+    # Distance of the virtual display from the user's head (meters)
+    vr_display_distance: float = 1.0
+    # Vertical offset of the display (meters, positive = up)
+    vr_display_offset_y: float = -0.2

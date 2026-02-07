@@ -34,8 +34,10 @@ Prerequisites:
 
 Usage:
   python teleoperate.py
+  python teleoperate.py --camera    # Enable camera-to-VR display
 """
 
+import argparse
 import time
 
 from lerobot.model.kinematics import RobotKinematics
@@ -72,9 +74,24 @@ MAX_EE_STEP_M = 0.05  # Conservative step limit for safety
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Quest 2 → SO-101 Teleoperation")
+    parser.add_argument(
+        "--camera", action="store_true",
+        help="Enable camera-to-VR display in the Quest 2 headset",
+    )
+    parser.add_argument(
+        "--camera-index", type=int, default=0,
+        help="Camera device index (default: 0)",
+    )
+    parser.add_argument(
+        "--robot-port", type=str, default=ROBOT_PORT,
+        help=f"Serial port for the SO-101 arm (default: {ROBOT_PORT})",
+    )
+    args = parser.parse_args()
+
     # Initialize robot
     robot_config = SO101FollowerConfig(
-        port=ROBOT_PORT,
+        port=args.robot_port,
         id=ROBOT_ID,
         use_degrees=True,
     )
@@ -86,6 +103,8 @@ def main():
         position_scale=1.0,
         rotation_scale=1.0,
         smoothing_alpha=0.15,
+        enable_camera_display=args.camera,
+        camera_index=args.camera_index,
     )
     teleop_device = QuestTeleoperator(teleop_config)
 
