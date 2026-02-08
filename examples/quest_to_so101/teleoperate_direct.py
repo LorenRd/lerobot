@@ -180,7 +180,7 @@ def main():
                 # Robot Z (up/down) → shoulder_lift (height)
                 mapped = {
                     "shoulder_pan":  home_joints["shoulder_pan"]  - pos_robot[1] * pos_scale,
-                    "shoulder_lift": home_joints["shoulder_lift"] - pos_robot[2] * pos_scale,
+                    "shoulder_lift": home_joints["shoulder_lift"] + pos_robot[2] * pos_scale,
                     "elbow_flex":    home_joints["elbow_flex"]    + pos_robot[0] * pos_scale,
                     "wrist_flex":    home_joints["wrist_flex"]    + euler_deg[1] * rot_scale,
                     "wrist_roll":    home_joints["wrist_roll"]    + euler_deg[0] * rot_scale,
