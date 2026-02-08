@@ -6,22 +6,20 @@ Quest 2 → SO-101 Direct Teleoperation (no IK required)
 Maps the Quest 2 right controller position/rotation directly to SO-101 joints.
 Uses simple proportional mapping — no inverse kinematics or URDF needed.
 
+Position mapping is handled by the empirical 5-pose calibration in quest_teleop.py:
+the calibration matrix maps VR hand deltas directly to robot-frame coordinates
+(X=forward, Y=left, Z=up), so this script simply reads pos[0..2] and maps them
+to the corresponding joints.
+
 Controls:
   - Index trigger (hold): Enable tracking (clutch). Release to reposition hand.
   - Grip trigger (squeeze): Close gripper. Release to open.
   - A button: Exit program
 
-Mapping (after VR→Robot frame transform):
-  - Hand forward/back (robot X) → elbow_flex
-  - Hand left/right (robot Y) → shoulder_pan
-  - Hand up/down (robot Z) → shoulder_lift
-  - Wrist pitch (about robot Y) → wrist_flex
-  - Wrist roll (about robot X) → wrist_roll
-
 Usage:
   python teleoperate_direct.py --robot-port COM4
-  python teleoperate_direct.py --robot-port COM4 --camera  # USB webcam in VR
-  python teleoperate_direct.py --robot-port COM4 --camera --camera-type depthai --show-depth  # OAK-D
+  python teleoperate_direct.py --robot-port COM4 --camera --camera-type depthai --show-depth
+  python teleoperate_direct.py --robot-port COM4 --recalibrate  # redo 5-pose calibration
 """
 
 import argparse
@@ -32,26 +30,6 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-
-def _rotation_to_euler_xyz(rot) -> np.ndarray:
-    """Extract extrinsic XYZ Euler angles (roll, pitch, yaw) from Rotation.
-
-    Returns array [roll_about_X, pitch_about_Y, yaw_about_Z] in radians.
-    Unlike rotvec components, these are independent single-axis rotations
-    that correctly decompose combined wrist orientations.
-    """
-    R = rot.as_matrix()
-    cy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
-    if cy > 1e-6:
-        roll = np.arctan2(R[2, 1], R[2, 2])
-        pitch = np.arctan2(-R[2, 0], cy)
-        yaw = np.arctan2(R[1, 0], R[0, 0])
-    else:
-        # Gimbal lock
-        roll = np.arctan2(-R[1, 2], R[1, 1])
-        pitch = np.pi / 2 if R[2, 0] < 0 else -np.pi / 2
-        yaw = 0.0
-    return np.array([roll, pitch, yaw])
 
 
 def main():
@@ -72,14 +50,12 @@ def main():
                         help="OAK-D device MxID (empty for auto-detect, depthai only)")
     parser.add_argument("--show-depth", action="store_true",
                         help="Show side-by-side RGB+depth in VR (depthai only)")
+    parser.add_argument("--recalibrate", action="store_true",
+                        help="Force fresh 5-pose calibration (ignores saved calibration)")
     args = parser.parse_args()
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
     from lerobot.teleoperators.quest import QuestTeleoperator, QuestTeleoperatorConfig
-    from lerobot.teleoperators.quest.coordinate_transform import (
-        vr_to_robot_position,
-        vr_to_robot_rotation,
-    )
     from lerobot.utils.rotation import Rotation
 
     # Initialize robot
@@ -106,7 +82,7 @@ def main():
     print(f"Robot connected. Motors: {list(robot.bus.motors.keys())}")
 
     print("\nConnecting Quest 2...")
-    teleop.connect()
+    teleop.connect(recalibrate=args.recalibrate)
     print("Quest 2 connected!")
     time.sleep(3)  # Wait for OpenXR session state
 
@@ -162,30 +138,28 @@ def main():
                 if not was_enabled:
                     home_joints = {m: current_joints[m] for m in motor_names}
 
-                # Transform from VR (Y-up) frame to robot (Z-up) frame
-                pos_robot = vr_to_robot_position(pos)
-                rot_robot = vr_to_robot_rotation(rot)
-
-                # Extract independent Euler angles in robot frame (radians → degrees)
-                # [0]=roll (about X/forward), [1]=pitch (about Y/left), [2]=yaw (about Z/up)
-                euler_deg = np.degrees(_rotation_to_euler_xyz(rot_robot))
+                # pos is already in robot frame (via calibration matrix in get_action)
+                # pos[0]=forward(+X), pos[1]=left(+Y), pos[2]=up(+Z)
 
                 # Noise deadzone: ignore sub-2mm hand tremor
-                if np.linalg.norm(pos_robot) < 0.002:
-                    pos_robot = np.zeros(3)
+                if np.linalg.norm(pos) < 0.002:
+                    pos = np.zeros(3)
 
-                # Proportional mapping: joint = home - displacement * scale
-                # All signs negative because +joint angle = EE moves down/right
-                # (verified via numerical Jacobian from URDF at home & typical poses)
-                # Robot X (forward) → -elbow_flex (extend arm)
-                # Robot Y (left)    → -shoulder_pan (sweep left)
-                # Robot Z (up)      → -shoulder_lift (raise arm)
+                # Rotation: use calibration data for axis/sign mapping
+                cal = teleop._calibration
+                rotvec = rot.as_rotvec()
+                rotvec_deg = np.degrees(rotvec)
+                pitch_deg = cal.rot_pitch_sign * rotvec_deg[cal.rot_pitch_vr_axis] if cal else 0.0
+                roll_deg = cal.rot_roll_sign * rotvec_deg[cal.rot_roll_vr_axis] if cal else 0.0
+
+                # Proportional mapping: joint = home + robot_delta * scale
+                # Signs from URDF Jacobian: +joint → EE down/right, so negate
                 mapped = {
-                    "shoulder_pan":  home_joints["shoulder_pan"]  - pos_robot[1] * pos_scale,
-                    "shoulder_lift": home_joints["shoulder_lift"] - pos_robot[2] * pos_scale,
-                    "elbow_flex":    home_joints["elbow_flex"]    - pos_robot[0] * pos_scale,
-                    "wrist_flex":    home_joints["wrist_flex"]    + euler_deg[1] * rot_scale,
-                    "wrist_roll":    home_joints["wrist_roll"]    + euler_deg[0] * rot_scale,
+                    "shoulder_pan":  home_joints["shoulder_pan"]  - pos[1] * pos_scale,
+                    "shoulder_lift": home_joints["shoulder_lift"] - pos[2] * pos_scale,
+                    "elbow_flex":    home_joints["elbow_flex"]    - pos[0] * pos_scale,
+                    "wrist_flex":    home_joints["wrist_flex"]    + pitch_deg * rot_scale,
+                    "wrist_roll":    home_joints["wrist_roll"]    + roll_deg * rot_scale,
                 }
 
                 # Clamp to limits

@@ -121,11 +121,36 @@ Episode controls: **A button** = save episode, **B button** = discard & re-recor
 
 ## Calibration
 
-On startup, the system asks you to hold the controller in a neutral pose:
-1. Extend your arm forward at a comfortable height
-2. Point the controller in the direction the robot faces (robot +X axis)
-3. Pull and hold the **index trigger** to capture the reference pose
-4. Release the trigger, then pull again to start teleoperating
+The system uses an **empirical 5-pose calibration** to map VR controller movements to
+robot joint angles. This replaces theoretical axis guessing with real measured data.
+
+### How It Works
+
+On first startup (or when `--recalibrate` is passed), the VR HUD guides you through
+5 poses. For each pose, pull the **index trigger** and hold still for 3 seconds while
+the system captures your controller position/rotation.
+
+| # | Pose | What It Measures |
+|---|------|-----------------|
+| 1 | **Neutral** — arm relaxed, controller pointing forward | Zero reference point |
+| 2 | **Forward** — extend hand ~20cm forward | "Reach" direction |
+| 3 | **Up** — raise hand ~20cm upward | "Lift" direction |
+| 4 | **Right** — move hand ~20cm to the right | "Pan" direction |
+| 5 | **Pitch down** — tilt controller nose ~45° downward | Wrist flex axis |
+
+From these 5 samples the system computes:
+- A **3×3 mapping matrix** that converts VR position deltas → robot frame coordinates
+- **Rotation axis/sign** mappings for wrist flex and roll
+
+### Persistence
+
+Calibration is saved to `~/.lerobot/quest_calibration.json` and auto-loaded on
+subsequent runs. To redo calibration:
+
+```bash
+python teleoperate_direct.py --robot-port COM4 --recalibrate
+python teleoperate.py --robot-port COM4 --recalibrate
+```
 
 ## Configuration
 

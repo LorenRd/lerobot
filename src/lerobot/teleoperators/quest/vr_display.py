@@ -52,6 +52,7 @@ class HudStatus:
     episode: int = 0
     frame_count: int = 0
     grip_value: float = 0.0  # 0.0 (open) to 1.0 (closed)
+    calibration_text: str = ""  # calibration instruction line (empty = hide)
 
 
 @dataclass
@@ -557,6 +558,19 @@ class VRCameraDisplay:
             cv2.putText(out, "Grip", (grip_x + grip_bar_w + 4, bar_h - 10), font, 0.35, (180, 180, 180), 1, cv2.LINE_AA)
         else:
             cv2.putText(out, "LeRobot Quest Teleop", (8, bar_h - 10), font, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
+
+        # --- Calibration instruction banner (center, below status bar) ---
+        if status is not None and status.calibration_text:
+            banner_h = 40
+            by0 = bar_h
+            overlay_cal = out[by0:by0 + banner_h, :].copy()
+            cv2.rectangle(out, (0, by0), (w, by0 + banner_h), (0, 0, 0), -1)
+            cv2.addWeighted(overlay_cal, 0.2, out[by0:by0 + banner_h, :], 0.8, 0, out[by0:by0 + banner_h, :])
+            # Yellow text, centered
+            text_size = cv2.getTextSize(status.calibration_text, font, 0.55, 1)[0]
+            tx = (w - text_size[0]) // 2
+            cv2.putText(out, status.calibration_text, (tx, by0 + banner_h - 12),
+                        font, 0.55, (0, 255, 255), 1, cv2.LINE_AA)
 
         # --- Control labels (bottom-left) ---
         labels = self.config.control_labels

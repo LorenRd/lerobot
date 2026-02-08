@@ -97,6 +97,10 @@ def main():
         help="Show side-by-side RGB+depth in VR (depthai only)",
     )
     parser.add_argument(
+        "--recalibrate", action="store_true",
+        help="Force fresh 5-pose calibration (ignores saved calibration)",
+    )
+    parser.add_argument(
         "--robot-port", type=str, default=ROBOT_PORT,
         help=f"Serial port for the SO-101 arm (default: {ROBOT_PORT})",
     )
@@ -166,7 +170,7 @@ def main():
 
     # Connect devices
     robot.connect()
-    teleop_device.connect()
+    teleop_device.connect(recalibrate=args.recalibrate)
 
     try:
         if not robot.is_connected or not teleop_device.is_connected:

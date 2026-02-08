@@ -493,6 +493,7 @@ class OpenXRSession:
                             hud.is_recording = getattr(self, "_hud_recording", False)
                             hud.episode = getattr(self, "_hud_episode", 0)
                             hud.frame_count = getattr(self, "_hud_frame_count", 0)
+                            hud.calibration_text = getattr(self, "_hud_calibration_text", "")
 
                             layer = self._vr_display.render_frame(
                                 frame, frame_state.predicted_display_time,
@@ -632,6 +633,10 @@ class OpenXRSession:
         self._hud_recording = is_recording
         self._hud_episode = episode
         self._hud_frame_count = frame_count
+
+    def set_hud_calibration_text(self, text: str) -> None:
+        """Set a calibration instruction line on the VR HUD overlay."""
+        self._hud_calibration_text = text
 
     def disconnect(self) -> None:
         """Stop polling and destroy OpenXR session and GL resources."""

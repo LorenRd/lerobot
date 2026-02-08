@@ -87,7 +87,10 @@ class MapQuestActionToRobotAction(RobotActionProcessorStep):
         # Get rotation vector from Rotation object
         rotvec = rot.as_rotvec()
 
-        # Apply VR → Robot coordinate frame transform
+        # Apply VR → Robot coordinate frame transform.
+        # When empirical calibration is active, get_action() already returns
+        # robot-frame position via the calibration matrix, so skip position
+        # transform.  Rotation is still a raw VR delta, so transform it.
         if self.apply_coordinate_transform:
             pos = vr_to_robot_position(pos)
             rotvec = vr_to_robot_rotvec(rotvec)
