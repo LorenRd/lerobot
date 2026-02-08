@@ -149,6 +149,11 @@ the system captures your controller position/rotation.
 | 4 | **Right** — move hand ~20cm to the right | "Pan" direction |
 | 5 | **Pitch down** — tilt controller nose ~45° downward | Wrist flex axis |
 
+![Calibration Poses](../../media/calibration_poses.png)
+
+> **Tip:** For poses 2–4, move your whole hand ~20cm from neutral without rotating.
+> For pose 5, keep your arm still and only rotate your wrist downward.
+
 From these 5 samples the system computes:
 - A **3×3 mapping matrix** that converts VR position deltas → robot frame coordinates
 - **Rotation axis/sign** mappings for wrist flex and roll
