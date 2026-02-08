@@ -174,14 +174,16 @@ def main():
                 if np.linalg.norm(pos_robot) < 0.002:
                     pos_robot = np.zeros(3)
 
-                # Proportional mapping: joint = home + displacement * scale
-                # Robot X (forward/back) → elbow_flex (reach)
-                # Robot Y (left/right) → shoulder_pan (sweep)
-                # Robot Z (up/down) → shoulder_lift (height)
+                # Proportional mapping: joint = home - displacement * scale
+                # All signs negative because +joint angle = EE moves down/right
+                # (verified via numerical Jacobian from URDF at home & typical poses)
+                # Robot X (forward) → -elbow_flex (extend arm)
+                # Robot Y (left)    → -shoulder_pan (sweep left)
+                # Robot Z (up)      → -shoulder_lift (raise arm)
                 mapped = {
                     "shoulder_pan":  home_joints["shoulder_pan"]  - pos_robot[1] * pos_scale,
-                    "shoulder_lift": home_joints["shoulder_lift"] + pos_robot[2] * pos_scale,
-                    "elbow_flex":    home_joints["elbow_flex"]    + pos_robot[0] * pos_scale,
+                    "shoulder_lift": home_joints["shoulder_lift"] - pos_robot[2] * pos_scale,
+                    "elbow_flex":    home_joints["elbow_flex"]    - pos_robot[0] * pos_scale,
                     "wrist_flex":    home_joints["wrist_flex"]    + euler_deg[1] * rot_scale,
                     "wrist_roll":    home_joints["wrist_roll"]    + euler_deg[0] * rot_scale,
                 }
