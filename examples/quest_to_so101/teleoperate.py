@@ -41,6 +41,8 @@ Usage:
 import argparse
 import time
 
+import cv2
+
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
@@ -99,6 +101,10 @@ def main():
     parser.add_argument(
         "--recalibrate", action="store_true",
         help="Force fresh 5-pose calibration (ignores saved calibration)",
+    )
+    parser.add_argument(
+        "--monitor-preview", action="store_true",
+        help="Show camera feed on desktop monitor (requires --camera)",
     )
     parser.add_argument(
         "--robot-port", type=str, default=ROBOT_PORT,
@@ -201,12 +207,23 @@ def main():
             # Send joint commands to robot
             robot.send_action(joint_action)
 
+            # Desktop monitor preview (camera feed with HUD)
+            if args.monitor_preview and args.camera:
+                monitor_frame = teleop_device.get_monitor_frame()
+                if monitor_frame is not None:
+                    cv2.imshow("SO-101 Camera", monitor_frame)
+                    if cv2.waitKey(1) & 0xFF == 27:  # ESC to quit
+                        print("\nESC pressed — exiting.")
+                        break
+
             # Maintain target FPS
             precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 
     except KeyboardInterrupt:
         print("\nTeleoperation stopped by user.")
     finally:
+        if args.monitor_preview:
+            cv2.destroyAllWindows()
         if teleop_device.is_connected:
             teleop_device.disconnect()
         if robot.is_connected:

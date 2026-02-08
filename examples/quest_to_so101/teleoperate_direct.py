@@ -26,6 +26,7 @@ import argparse
 import logging
 import time
 
+import cv2
 import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -52,6 +53,8 @@ def main():
                         help="Show side-by-side RGB+depth in VR (depthai only)")
     parser.add_argument("--recalibrate", action="store_true",
                         help="Force fresh 5-pose calibration (ignores saved calibration)")
+    parser.add_argument("--monitor-preview", action="store_true",
+                        help="Show camera feed on desktop monitor (requires --camera)")
     args = parser.parse_args()
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
@@ -181,6 +184,15 @@ def main():
             j = " ".join(f"{m[:4]}={current_joints[m]:+6.1f}" for m in motor_names[:5])
             print(f"\r  [{status}] {j} grip={current_joints['gripper']:5.1f}", end="", flush=True)
 
+            # Desktop monitor preview (camera feed with HUD)
+            if args.monitor_preview and args.camera:
+                monitor_frame = teleop.get_monitor_frame()
+                if monitor_frame is not None:
+                    cv2.imshow("SO-101 Camera", monitor_frame)
+                    if cv2.waitKey(1) & 0xFF == 27:  # ESC to quit
+                        print("\nESC pressed — exiting.")
+                        break
+
             elapsed = time.perf_counter() - t0
             if elapsed < interval:
                 time.sleep(interval - elapsed)
@@ -188,6 +200,8 @@ def main():
     except KeyboardInterrupt:
         print("\n\nStopped by user.")
     finally:
+        if args.monitor_preview:
+            cv2.destroyAllWindows()
         teleop.disconnect()
         robot.disconnect()
         print("Devices disconnected.")

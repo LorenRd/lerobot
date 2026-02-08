@@ -334,10 +334,16 @@ class VRCameraDisplay:
         self._swapchain_images = []
         self._space = None
         self._is_setup = False
+        # Latest composited display frame (BGR) for desktop monitor preview
+        self._latest_display_frame: np.ndarray | None = None
 
     @property
     def is_setup(self) -> bool:
         return self._is_setup
+
+    def get_latest_display_frame(self) -> np.ndarray | None:
+        """Return the latest composited display frame (BGR) for monitor preview."""
+        return self._latest_display_frame
 
     def setup(self, xr_session, xr_space) -> None:
         """
@@ -462,6 +468,9 @@ class VRCameraDisplay:
         # Draw HUD overlay (controls + status) on top of the display frame
         if self.config.show_controls:
             display_frame = self._draw_hud_overlay(display_frame, hud_status)
+
+        # Store a copy for desktop monitor preview (BGR, no GL flip)
+        self._latest_display_frame = display_frame.copy()
 
         # Convert BGR → RGBA for OpenGL
         frame_rgba = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGBA)

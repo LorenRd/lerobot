@@ -79,9 +79,20 @@ python teleoperate_direct.py --robot-port COM4 --camera --camera-type depthai --
 python teleoperate.py --camera --camera-type depthai --camera-device-id 18443010211F850E00
 ```
 
-When `--camera` is enabled, the arm-mounted USB camera feed is rendered as a
-floating 2D panel in the Quest 2 headset, giving the operator a first-person
-view of the robot workspace.
+When `--camera` is enabled, the arm-mounted camera feed is rendered as a
+head-locked 2D panel in the Quest 2 headset (follows your gaze), giving the
+operator a first-person view of the robot workspace.
+
+### Monitor Preview (Desktop Window)
+```bash
+# Show camera feed on your PC monitor while teleoperating
+python teleoperate_direct.py --robot-port COM4 --camera --camera-type depthai --show-depth --monitor-preview
+python teleoperate.py --camera --camera-type depthai --monitor-preview
+```
+
+The `--monitor-preview` flag opens a desktop OpenCV window showing the same
+composited camera feed (RGB + depth + HUD overlay) that appears in the headset.
+Useful for observers or debugging. Press **ESC** in the preview window to quit.
 
 Edit `teleoperate.py` to set your `ROBOT_PORT` and `URDF_PATH`.
 

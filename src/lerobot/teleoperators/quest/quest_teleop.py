@@ -593,6 +593,18 @@ class QuestTeleoperator(Teleoperator):
         if self._session is not None:
             self._session.update_hud_status(is_recording, episode, frame_count)
 
+    def get_monitor_frame(self) -> np.ndarray | None:
+        """Return the latest composited camera frame (BGR) for desktop monitor display.
+
+        Returns None if camera display is not enabled or no frame has been rendered yet.
+        """
+        if self._vr_display is not None:
+            return self._vr_display.get_latest_display_frame()
+        # Fallback: return raw camera frame if display not set up but camera exists
+        if self._camera_stream is not None:
+            return self._camera_stream.get_latest_frame()
+        return None
+
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """
         Send feedback to the Quest controller.

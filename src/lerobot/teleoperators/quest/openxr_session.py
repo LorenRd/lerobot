@@ -181,12 +181,24 @@ class OpenXRSession:
             ),
         )
 
+        # Create VIEW reference space for head-locked display panels.
+        # VIEW space moves with the headset, so quads placed in it are always
+        # in front of the user regardless of where they look.
+        self._view_space = xr.create_reference_space(
+            self._session,
+            xr.ReferenceSpaceCreateInfo(
+                reference_space_type=xr.ReferenceSpaceType.VIEW,
+                pose_in_reference_space=xr.Posef(),
+            ),
+        )
+
         # Set up input actions
         self._setup_actions()
 
         # Set up VR display (swapchain) if enabled and attached
+        # Use VIEW space so the camera panel is head-locked (always in front)
         if self._enable_display and self._vr_display and not self._vr_display.is_setup:
-            self._vr_display.setup(self._session, self._space)
+            self._vr_display.setup(self._session, self._view_space)
 
         # Release GL context from main thread so background thread can acquire it
         if self._gl_handles:
