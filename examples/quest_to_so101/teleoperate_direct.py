@@ -34,7 +34,10 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 def main():
     parser = argparse.ArgumentParser(description="Quest 2 → SO-101 Direct Teleoperation")
     parser.add_argument("--robot-port", type=str, default="COM4", help="Serial port for SO-101")
-    parser.add_argument("--speed", type=float, default=40.0, help="Degrees per movement unit")
+    parser.add_argument("--pos-scale", type=float, default=300.0,
+                        help="Position sensitivity: degrees per meter of hand displacement")
+    parser.add_argument("--rot-scale", type=float, default=0.7,
+                        help="Rotation sensitivity: multiplier on wrist rotation (0.1-2.0)")
     parser.add_argument("--fps", type=int, default=30, help="Control loop FPS")
     args = parser.parse_args()
 
@@ -90,8 +93,13 @@ def main():
         "\nMove your hand to control the arm!\n"
     )
 
-    speed = args.speed
+    pos_scale = args.pos_scale
+    rot_scale = args.rot_scale
     interval = 1.0 / args.fps
+
+    # Home joints: recorded when tracking first engages so arm moves relative to its starting pose
+    home_joints = None
+    was_enabled = False
 
     try:
         while True:
@@ -108,25 +116,30 @@ def main():
                 break
 
             if enabled:
-                # Extract rotation vector (radians) — convert to degrees for joint mapping
+                # First frame of tracking: snapshot current joints as "home"
+                if not was_enabled:
+                    home_joints = {m: current_joints[m] for m in motor_names}
+
+                # Extract rotation vector (radians) → degrees
                 rotvec = rot.as_rotvec()
                 rot_deg = np.degrees(rotvec)
 
-                # Map controller movements to joint deltas
-                deltas = {
-                    "shoulder_pan": pos[0] * speed,    # left/right
-                    "shoulder_lift": pos[1] * speed,   # up/down
-                    "elbow_flex": -pos[2] * speed,     # forward/back
-                    "wrist_flex": rot_deg[0] * 0.5,    # pitch
-                    "wrist_roll": rot_deg[2] * 0.5,    # yaw
+                # Proportional mapping: joint = home + displacement * scale
+                # pos is displacement from clutch reference (meters), not velocity
+                mapped = {
+                    "shoulder_pan":  home_joints["shoulder_pan"]  + pos[0] * pos_scale,
+                    "shoulder_lift": home_joints["shoulder_lift"] - pos[1] * pos_scale,  # negated: hand up → arm up
+                    "elbow_flex":    home_joints["elbow_flex"]    - pos[2] * pos_scale,
+                    "wrist_flex":    home_joints["wrist_flex"]    + rot_deg[0] * rot_scale,
+                    "wrist_roll":    home_joints["wrist_roll"]    + rot_deg[2] * rot_scale,
                 }
 
-                # Apply deltas to current joints, clamp to limits
-                for motor, delta in deltas.items():
+                # Clamp to limits
+                for motor, value in mapped.items():
                     lo, hi = joint_limits[motor]
-                    current_joints[motor] = np.clip(
-                        current_joints[motor] + delta, lo, hi
-                    )
+                    current_joints[motor] = np.clip(value, lo, hi)
+
+            was_enabled = enabled
 
             # Gripper: map grip trigger to joint position
             current_joints["gripper"] = grip * 100.0
