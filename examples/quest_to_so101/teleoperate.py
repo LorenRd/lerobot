@@ -34,7 +34,8 @@ Prerequisites:
 
 Usage:
   python teleoperate.py
-  python teleoperate.py --camera    # Enable camera-to-VR display
+  python teleoperate.py --camera    # Enable camera-to-VR display (USB webcam)
+  python teleoperate.py --camera --camera-type depthai --show-depth  # OAK-D Lite RGB+depth
 """
 
 import argparse
@@ -81,7 +82,19 @@ def main():
     )
     parser.add_argument(
         "--camera-index", type=int, default=0,
-        help="Camera device index (default: 0)",
+        help="Camera device index for OpenCV backend (default: 0)",
+    )
+    parser.add_argument(
+        "--camera-type", type=str, default="opencv", choices=["opencv", "depthai"],
+        help="Camera backend: opencv (USB webcam) or depthai (OAK-D Lite)",
+    )
+    parser.add_argument(
+        "--camera-device-id", type=str, default="",
+        help="OAK-D device MxID (empty for auto-detect, depthai only)",
+    )
+    parser.add_argument(
+        "--show-depth", action="store_true",
+        help="Show side-by-side RGB+depth in VR (depthai only)",
     )
     parser.add_argument(
         "--robot-port", type=str, default=ROBOT_PORT,
@@ -105,6 +118,9 @@ def main():
         smoothing_alpha=0.15,
         enable_camera_display=args.camera,
         camera_index=args.camera_index,
+        camera_type=args.camera_type,
+        camera_device_id=args.camera_device_id,
+        show_depth_in_vr=args.show_depth,
     )
     teleop_device = QuestTeleoperator(teleop_config)
 

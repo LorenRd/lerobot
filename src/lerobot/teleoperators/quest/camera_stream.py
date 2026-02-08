@@ -131,6 +131,10 @@ class CameraStream:
             return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return None
 
+    def get_latest_depth_frame(self) -> np.ndarray | None:
+        """Get the latest depth frame (thread-safe). Returns None for OpenCV cameras."""
+        return None
+
     @property
     def frame_count(self) -> int:
         with self._lock:
@@ -148,3 +152,77 @@ class CameraStream:
             self._capture = None
 
         logger.info("Camera stream disconnected.")
+
+
+class DepthAICameraStream:
+    """
+    Wraps a DepthAICamera instance for use with the Quest VR display pipeline.
+
+    Provides the same interface as CameraStream (get_latest_frame, get_latest_depth_frame)
+    but uses the DepthAI Camera class which handles its own background threading.
+    """
+
+    def __init__(self, device_id: str = "", width: int = 640, height: int = 480, fps: int = 30):
+        self._device_id = device_id
+        self._width = width
+        self._height = height
+        self._fps = fps
+        self._camera = None
+
+    @property
+    def is_connected(self) -> bool:
+        return self._camera is not None and self._camera.is_connected
+
+    def connect(self) -> None:
+        """Open the DepthAI camera with RGB + depth streams."""
+        from lerobot.cameras.configs import ColorMode
+        from lerobot.cameras.depthai import DepthAICamera, DepthAICameraConfig
+
+        config = DepthAICameraConfig(
+            device_id=self._device_id,
+            fps=self._fps,
+            width=self._width,
+            height=self._height,
+            use_depth=True,
+            color_mode=ColorMode.BGR,
+        )
+        self._camera = DepthAICamera(config)
+        self._camera.connect()
+        logger.info(f"DepthAI camera stream connected: {self._width}x{self._height} @ {self._fps} FPS")
+
+    def get_latest_frame(self) -> np.ndarray | None:
+        """Get the latest BGR color frame (thread-safe)."""
+        if self._camera is None or not self._camera.is_connected:
+            return None
+        try:
+            return self._camera.read_latest(max_age_ms=1000)
+        except Exception:
+            return None
+
+    def get_latest_frame_rgb(self) -> np.ndarray | None:
+        """Get the latest RGB color frame."""
+        frame = self.get_latest_frame()
+        if frame is not None:
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return None
+
+    def get_latest_depth_frame(self) -> np.ndarray | None:
+        """Get the latest depth frame as uint16 (millimeters)."""
+        if self._camera is None or not self._camera.is_connected:
+            return None
+        try:
+            with self._camera.frame_lock:
+                depth = self._camera.latest_depth_frame
+                if depth is not None:
+                    return depth.copy()
+            return None
+        except Exception:
+            return None
+
+    def disconnect(self) -> None:
+        """Stop capture and release the DepthAI camera."""
+        if self._camera is not None:
+            if self._camera.is_connected:
+                self._camera.disconnect()
+            self._camera = None
+        logger.info("DepthAI camera stream disconnected.")

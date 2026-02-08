@@ -20,6 +20,8 @@ Mapping:
 
 Usage:
   python teleoperate_direct.py --robot-port COM4
+  python teleoperate_direct.py --robot-port COM4 --camera  # USB webcam in VR
+  python teleoperate_direct.py --robot-port COM4 --camera --camera-type depthai --show-depth  # OAK-D
 """
 
 import argparse
@@ -39,6 +41,16 @@ def main():
     parser.add_argument("--rot-scale", type=float, default=0.7,
                         help="Rotation sensitivity: multiplier on wrist rotation (0.1-2.0)")
     parser.add_argument("--fps", type=int, default=30, help="Control loop FPS")
+    parser.add_argument("--camera", action="store_true",
+                        help="Enable camera-to-VR display in Quest headset")
+    parser.add_argument("--camera-index", type=int, default=0,
+                        help="Camera device index for OpenCV backend (default: 0)")
+    parser.add_argument("--camera-type", type=str, default="opencv", choices=["opencv", "depthai"],
+                        help="Camera backend: opencv (USB webcam) or depthai (OAK-D Lite)")
+    parser.add_argument("--camera-device-id", type=str, default="",
+                        help="OAK-D device MxID (empty for auto-detect, depthai only)")
+    parser.add_argument("--show-depth", action="store_true",
+                        help="Show side-by-side RGB+depth in VR (depthai only)")
     args = parser.parse_args()
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
@@ -55,6 +67,11 @@ def main():
         position_scale=1.0,
         rotation_scale=1.0,
         smoothing_alpha=0.2,
+        enable_camera_display=args.camera,
+        camera_index=args.camera_index,
+        camera_type=args.camera_type,
+        camera_device_id=args.camera_device_id,
+        show_depth_in_vr=args.show_depth,
     )
     teleop = QuestTeleoperator(teleop_config)
 

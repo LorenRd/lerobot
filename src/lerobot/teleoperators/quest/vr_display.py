@@ -35,12 +35,23 @@ Requirements:
 import ctypes
 import logging
 import platform
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class HudStatus:
+    """Dynamic state passed to the VR HUD overlay each frame."""
+
+    is_tracking: bool = False
+    is_recording: bool = False
+    episode: int = 0
+    frame_count: int = 0
+    grip_value: float = 0.0  # 0.0 (open) to 1.0 (closed)
 
 
 @dataclass
@@ -59,6 +70,19 @@ class VRDisplayConfig:
     # Texture resolution (should match camera resolution for best quality)
     texture_width: int = 640
     texture_height: int = 480
+    # Side-by-side depth display mode
+    show_depth: bool = False
+    # OpenCV colormap for depth visualization (COLORMAP_TURBO, COLORMAP_JET, etc.)
+    depth_colormap: int = cv2.COLORMAP_TURBO
+    # Show controls & status HUD overlay on the camera feed
+    show_controls: bool = True
+    # Control labels to display (list of "ICON  Label" strings)
+    control_labels: list[str] = field(default_factory=lambda: [
+        "Trigger  Track Arm",
+        "Grip     Close Gripper",
+        "A Btn    Save Episode",
+        "B Btn    Discard",
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +268,44 @@ def _create_wgl_context():
 
 
 # ---------------------------------------------------------------------------
+# Depth visualization utilities
+# ---------------------------------------------------------------------------
+
+
+def colorize_depth(depth_frame: np.ndarray, colormap: int = cv2.COLORMAP_TURBO) -> np.ndarray:
+    """
+    Colorize a depth map for visualization.
+
+    Args:
+        depth_frame: Depth map as numpy array (H, W) uint16 in millimeters.
+        colormap: OpenCV colormap constant (default: COLORMAP_TURBO).
+
+    Returns:
+        Colorized depth image as BGR numpy array (H, W, 3) uint8.
+    """
+    if depth_frame.ndim == 3 and depth_frame.shape[2] == 1:
+        depth_frame = depth_frame[:, :, 0]
+
+    invalid_mask = depth_frame == 0
+    if depth_frame.dtype == np.uint16:
+        # Normalize to 0-255 using percentile-based range for better contrast
+        valid = depth_frame[~invalid_mask]
+        if valid.size > 0:
+            min_d = np.percentile(valid, 3)
+            max_d = np.percentile(valid, 97)
+            normalized = np.clip((depth_frame.astype(np.float32) - min_d) / max(max_d - min_d, 1), 0, 1)
+            normalized = (normalized * 255).astype(np.uint8)
+        else:
+            normalized = np.zeros(depth_frame.shape, dtype=np.uint8)
+    else:
+        normalized = depth_frame.astype(np.uint8) if depth_frame.dtype != np.uint8 else depth_frame
+
+    colorized = cv2.applyColorMap(normalized, colormap)
+    colorized[invalid_mask] = 0  # Black for invalid/zero depth
+    return colorized
+
+
+# ---------------------------------------------------------------------------
 # VR Camera Display
 # ---------------------------------------------------------------------------
 
@@ -354,13 +416,16 @@ class VRCameraDisplay:
             f"{len(self._swapchain_images)} swapchain images, format={chosen_format:#x}"
         )
 
-    def render_frame(self, frame: np.ndarray, display_time) -> "xr.CompositionLayerQuad":
+    def render_frame(self, frame: np.ndarray, display_time, depth_frame: np.ndarray | None = None, hud_status: HudStatus | None = None) -> "xr.CompositionLayerQuad":
         """
         Upload a camera frame to the swapchain and return a quad composition layer.
 
         Args:
             frame: Camera frame as numpy array (H, W, 3) in BGR format.
             display_time: Predicted display time from xr.wait_frame().
+            depth_frame: Optional depth map as numpy array (H, W) uint16 in millimeters.
+                         When provided and show_depth is enabled, creates a side-by-side
+                         RGB + colorized depth display.
 
         Returns:
             An xr.CompositionLayerQuad to submit in xr.end_frame() layers.
@@ -383,12 +448,22 @@ class VRCameraDisplay:
         tex_w = self.config.texture_width
         tex_h = self.config.texture_height
 
-        # Resize if frame dimensions don't match texture
-        if frame.shape[1] != tex_w or frame.shape[0] != tex_h:
-            frame = cv2.resize(frame, (tex_w, tex_h))
+        # Build the display frame (side-by-side if depth is available)
+        if self.config.show_depth and depth_frame is not None:
+            display_frame = self._compose_side_by_side(frame, depth_frame, tex_w, tex_h)
+        else:
+            # Resize if frame dimensions don't match texture
+            if frame.shape[1] != tex_w or frame.shape[0] != tex_h:
+                display_frame = cv2.resize(frame, (tex_w, tex_h))
+            else:
+                display_frame = frame
+
+        # Draw HUD overlay (controls + status) on top of the display frame
+        if self.config.show_controls:
+            display_frame = self._draw_hud_overlay(display_frame, hud_status)
 
         # Convert BGR → RGBA for OpenGL
-        frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+        frame_rgba = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGBA)
         # Flip vertically (OpenGL textures are bottom-up, camera frames are top-down)
         frame_rgba = np.ascontiguousarray(np.flipud(frame_rgba))
 
@@ -407,6 +482,11 @@ class VRCameraDisplay:
         xr.release_swapchain_image(
             self._swapchain, xr.SwapchainImageReleaseInfo()
         )
+
+        # Determine display width (wider for side-by-side mode)
+        actual_display_width = self.config.display_width
+        if self.config.show_depth:
+            actual_display_width = self.config.display_width * 2.0
 
         # Build the quad composition layer
         layer = xr.CompositionLayerQuad(
@@ -430,12 +510,85 @@ class VRCameraDisplay:
                 ),
             ),
             size=xr.Extent2Df(
-                self.config.display_width,
+                actual_display_width,
                 self.config.display_height,
             ),
         )
 
         return layer
+
+    def _draw_hud_overlay(
+        self, frame: np.ndarray, status: HudStatus | None = None
+    ) -> np.ndarray:
+        """Draw a semi-transparent controls & status HUD overlay on the frame."""
+        out = frame.copy()
+        h, w = out.shape[:2]
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        # --- Status bar (top) ---
+        bar_h = 32
+        overlay = out[:bar_h, :].copy()
+        cv2.rectangle(out, (0, 0), (w, bar_h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.3, out[:bar_h, :], 0.7, 0, out[:bar_h, :])
+
+        if status is not None:
+            # Tracking indicator
+            track_color = (0, 255, 0) if status.is_tracking else (80, 80, 80)
+            track_text = "TRACKING" if status.is_tracking else "PAUSED"
+            cv2.circle(out, (16, bar_h // 2), 6, track_color, -1)
+            cv2.putText(out, track_text, (28, bar_h - 10), font, 0.45, track_color, 1, cv2.LINE_AA)
+
+            # Recording indicator
+            if status.is_recording:
+                cv2.circle(out, (w // 2 - 50, bar_h // 2), 6, (0, 0, 255), -1)
+                cv2.putText(out, "REC", (w // 2 - 38, bar_h - 10), font, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+
+            # Episode / frame count
+            info = f"Ep {status.episode}  F {status.frame_count}"
+            cv2.putText(out, info, (w - 180, bar_h - 10), font, 0.4, (200, 200, 200), 1, cv2.LINE_AA)
+
+            # Grip bar
+            grip_x = w // 2 + 30
+            grip_bar_w = 60
+            cv2.rectangle(out, (grip_x, 8), (grip_x + grip_bar_w, bar_h - 8), (80, 80, 80), 1)
+            fill_w = int(grip_bar_w * status.grip_value)
+            if fill_w > 0:
+                cv2.rectangle(out, (grip_x, 8), (grip_x + fill_w, bar_h - 8), (0, 180, 255), -1)
+            cv2.putText(out, "Grip", (grip_x + grip_bar_w + 4, bar_h - 10), font, 0.35, (180, 180, 180), 1, cv2.LINE_AA)
+        else:
+            cv2.putText(out, "LeRobot Quest Teleop", (8, bar_h - 10), font, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
+
+        # --- Control labels (bottom-left) ---
+        labels = self.config.control_labels
+        line_h = 20
+        panel_h = len(labels) * line_h + 12
+        panel_w = 220
+        y0 = h - panel_h
+        overlay_bot = out[y0:h, 0:panel_w].copy()
+        cv2.rectangle(out, (0, y0), (panel_w, h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay_bot, 0.3, out[y0:h, 0:panel_w], 0.7, 0, out[y0:h, 0:panel_w])
+
+        for i, label in enumerate(labels):
+            y = y0 + 16 + i * line_h
+            cv2.putText(out, label, (8, y), font, 0.35, (220, 220, 220), 1, cv2.LINE_AA)
+
+        return out
+
+    def _compose_side_by_side(
+        self, rgb_frame: np.ndarray, depth_frame: np.ndarray, tex_w: int, tex_h: int
+    ) -> np.ndarray:
+        """Compose a side-by-side RGB + colorized depth frame for VR display."""
+        half_w = tex_w // 2
+
+        # Resize RGB to fit left half
+        rgb_resized = cv2.resize(rgb_frame, (half_w, tex_h))
+
+        # Colorize depth map
+        depth_colorized = colorize_depth(depth_frame, self.config.depth_colormap)
+        depth_resized = cv2.resize(depth_colorized, (half_w, tex_h))
+
+        # Stack horizontally
+        return np.hstack([rgb_resized, depth_resized])
 
     def destroy(self) -> None:
         """Release OpenXR swapchain resources."""

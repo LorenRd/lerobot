@@ -11,7 +11,9 @@ Two teleoperation modes are available:
 - **Meta Quest 2** headset with right controller
 - **USB-C cable** (Quest Link compatible) connecting Quest 2 to PC
 - **SO-101 robot arm** connected via USB serial
-- **USB camera** (optional) mounted on the arm for visual feedback in VR
+- **Camera** (optional, one of):
+  - **USB webcam** mounted on the arm for basic visual feedback
+  - **Luxonis OAK-D Lite** mounted on the gripper for RGB + stereo depth (recommended for dataset recording)
 
 ## Software Requirements
 
@@ -30,6 +32,11 @@ Two teleoperation modes are available:
 ### Python Dependencies
 ```bash
 pip install lerobot[quest]
+```
+
+For **OAK-D Lite** camera support (RGB + depth):
+```bash
+pip install lerobot[quest,depthai]
 ```
 
 This installs `pyopenxr>=1.1.0`, `PyOpenGL>=3.1.0`, and `glfw` alongside the base LeRobot dependencies.
@@ -63,8 +70,13 @@ python teleoperate.py --robot-port COM4
 
 ### Teleoperation with Camera-to-VR Display
 ```bash
+# USB webcam
 python teleoperate_direct.py --robot-port COM4 --camera
 python teleoperate.py --camera --camera-index 1  # Use second USB camera
+
+# OAK-D Lite (RGB + depth side-by-side in VR)
+python teleoperate_direct.py --robot-port COM4 --camera --camera-type depthai --show-depth
+python teleoperate.py --camera --camera-type depthai --camera-device-id 18443010211F850E00
 ```
 
 When `--camera` is enabled, the arm-mounted USB camera feed is rendered as a
@@ -75,8 +87,26 @@ Edit `teleoperate.py` to set your `ROBOT_PORT` and `URDF_PATH`.
 
 ### Recording Dataset
 ```bash
+# Simple recording (legacy format, no OAK-D support)
 python record.py
+
+# Full LeRobotDataset recording with OAK-D Lite (recommended)
+python record_dataset.py --repo-id user/my_dataset --robot-port COM4
+
+# IK mode, custom FPS, no depth
+python record_dataset.py --repo-id user/my_dataset --robot-port COM4 --mode ik --fps 15 --no-depth
+
+# With VR preview + specific OAK-D device
+python record_dataset.py --repo-id user/my_dataset --show-vr-preview --camera-device-id 18443010211F850E00
 ```
+
+The `record_dataset.py` script records episodes in the standard LeRobot dataset format with:
+- `observation.images.wrist_rgb` — RGB frames from OAK-D Lite (480×640×3)
+- `observation.images.wrist_depth` — Stereo depth maps (480×640×1, uint8 normalized)
+- `observation.state` — 6 joint positions (shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper)
+- `action` — 6 joint commands
+
+Episode controls: **A button** = save episode, **B button** = discard & re-record, **Ctrl+C** = end session.
 
 ## Controls
 
@@ -110,6 +140,9 @@ Key parameters in `QuestTeleoperatorConfig`:
 | `gripper_threshold` | 0.5 | Grip trigger threshold for gripper close |
 | `enable_camera_display` | False | Enable camera-to-VR headset display |
 | `camera_index` | 0 | USB camera device index or path |
+| `camera_type` | "opencv" | Camera backend: `"opencv"` (webcam) or `"depthai"` (OAK-D) |
+| `camera_device_id` | "" | OAK-D MxID for specific device (depthai only) |
+| `show_depth_in_vr` | False | Side-by-side RGB+depth panel in VR (depthai only) |
 | `vr_display_distance` | 1.0 | Distance of VR display panel from user (meters) |
 | `vr_display_width` | 0.6 | Width of VR display panel (meters) |
 | `vr_display_height` | 0.45 | Height of VR display panel (meters) |
@@ -139,13 +172,22 @@ SO-101 Follower (serial motor commands)
 --- Camera-to-VR Display (optional, --camera flag) ---
 
 USB Camera (arm-mounted) → CameraStream (background capture thread)
-    │
+    │                        or
+OAK-D Lite (gripper-mounted) → DepthAICameraStream
+    │   ├── RGB stream  → left panel
+    │   └── Depth stream → right panel (colorized)
     ▼
 VRCameraDisplay → OpenXR swapchain texture upload
     │
     ▼
 OpenXR quad composition layer → Quest 2 headset display
     (floating 2D panel in front of user)
+
+--- Dataset Recording (record_dataset.py) ---
+
+OAK-D Lite → RGB + Depth frames  ─┐
+Quest 2    → Joint commands       ─┤→ LeRobotDataset.add_frame()
+SO-101     → Joint positions      ─┘    → .save_episode() → disk
 ```
 
 ## Troubleshooting
@@ -167,4 +209,7 @@ OpenXR quad composition layer → Quest 2 headset display
 | Robot connection hangs | Ensure arm is powered (external power, not just USB), correct COM port |
 | Camera display not showing | Check USB camera connection, try `--camera-index 1` |
 | Camera display laggy | Reduce `camera_width`/`camera_height` or `camera_fps` |
+| OAK-D not detected | Run `python -c "import depthai; print(depthai.Device.getAllAvailableDevices())"` to verify USB connection |
+| OAK-D depth is noisy | Normal at close range (<20cm). Ensure stereo cameras are clean |
+| Depth panel all black | Check `--show-depth` flag and `use_depth=True` in camera config |
 | "No module 'scservo_sdk'" | Run `pip install feetech-servo-sdk` |

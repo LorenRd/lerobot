@@ -56,8 +56,12 @@ class QuestTeleoperatorConfig(TeleoperatorConfig):
     # --- Camera-to-VR Display ---
     # Enable camera feed display in the Quest 2 headset
     enable_camera_display: bool = False
-    # Camera device index or path (e.g., 0 for first USB camera)
+    # Camera backend type: "opencv" for USB webcam, "depthai" for Luxonis OAK-D
+    camera_type: str = "opencv"
+    # Camera device index or path (opencv) or MxID (depthai). Empty string for auto-detect.
     camera_index: int | str = 0
+    # DepthAI device ID (MxID or IP). Only used when camera_type="depthai".
+    camera_device_id: str = ""
     # Camera capture resolution
     camera_width: int = 640
     camera_height: int = 480
@@ -70,3 +74,5 @@ class QuestTeleoperatorConfig(TeleoperatorConfig):
     vr_display_distance: float = 1.0
     # Vertical offset of the display (meters, positive = up)
     vr_display_offset_y: float = -0.2
+    # Show side-by-side RGB + depth in VR (requires camera_type="depthai")
+    show_depth_in_vr: bool = False

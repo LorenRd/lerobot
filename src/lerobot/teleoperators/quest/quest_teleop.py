@@ -118,16 +118,30 @@ class QuestTeleoperator(Teleoperator):
 
         # Set up camera-to-VR display if enabled
         if enable_display:
-            from .camera_stream import CameraStream, CameraStreamConfig
             from .vr_display import VRCameraDisplay, VRDisplayConfig
 
-            cam_config = CameraStreamConfig(
-                camera_index=self.config.camera_index,
-                capture_width=self.config.camera_width,
-                capture_height=self.config.camera_height,
-                capture_fps=self.config.camera_fps,
-            )
-            self._camera_stream = CameraStream(cam_config)
+            show_depth = self.config.show_depth_in_vr and self.config.camera_type == "depthai"
+
+            if self.config.camera_type == "depthai":
+                from .camera_stream import DepthAICameraStream
+
+                self._camera_stream = DepthAICameraStream(
+                    device_id=self.config.camera_device_id,
+                    width=self.config.camera_width,
+                    height=self.config.camera_height,
+                    fps=self.config.camera_fps,
+                )
+            else:
+                from .camera_stream import CameraStream, CameraStreamConfig
+
+                cam_config = CameraStreamConfig(
+                    camera_index=self.config.camera_index,
+                    capture_width=self.config.camera_width,
+                    capture_height=self.config.camera_height,
+                    capture_fps=self.config.camera_fps,
+                )
+                self._camera_stream = CameraStream(cam_config)
+
             self._camera_stream.connect()
 
             display_config = VRDisplayConfig(
@@ -138,6 +152,7 @@ class QuestTeleoperator(Teleoperator):
                 display_offset_y=self.config.vr_display_offset_y,
                 texture_width=self.config.camera_width,
                 texture_height=self.config.camera_height,
+                show_depth=show_depth,
             )
             self._vr_display = VRCameraDisplay(display_config)
             self._session.attach_camera_display(self._vr_display, self._camera_stream)
@@ -321,6 +336,11 @@ class QuestTeleoperator(Teleoperator):
     def configure(self) -> None:
         """No additional configuration needed for Quest controller."""
         pass
+
+    def update_hud_status(self, is_recording: bool = False, episode: int = 0, frame_count: int = 0) -> None:
+        """Update the VR HUD overlay with recording status (for use by recording scripts)."""
+        if self._session is not None:
+            self._session.update_hud_status(is_recording, episode, frame_count)
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """

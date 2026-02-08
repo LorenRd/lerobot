@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from .camera_stream import CameraStream
+    from .camera_stream import CameraStream, DepthAICameraStream
     from .vr_display import VRCameraDisplay
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ class OpenXRSession:
         return self._session is not None and self._running
 
     def attach_camera_display(
-        self, vr_display: VRCameraDisplay, camera_source: CameraStream
+        self, vr_display: VRCameraDisplay, camera_source: CameraStream | DepthAICameraStream
     ) -> None:
         """
         Attach a VR camera display and camera source for headset rendering.
@@ -476,8 +476,28 @@ class OpenXRSession:
                     frame = self._camera_source.get_latest_frame()
                     if frame is not None:
                         try:
+                            # Get depth frame if the camera source supports it
+                            depth_frame = None
+                            if hasattr(self._camera_source, "get_latest_depth_frame"):
+                                depth_frame = self._camera_source.get_latest_depth_frame()
+
+                            # Build HUD status from current controller state
+                            from .vr_display import HudStatus
+                            with self._lock:
+                                rs = self._right_state
+                                hud = HudStatus(
+                                    is_tracking=rs.index_trigger > 0.3,
+                                    grip_value=rs.grip_trigger,
+                                )
+                            # External code can set _hud_recording / _hud_episode / _hud_frame_count
+                            hud.is_recording = getattr(self, "_hud_recording", False)
+                            hud.episode = getattr(self, "_hud_episode", 0)
+                            hud.frame_count = getattr(self, "_hud_frame_count", 0)
+
                             layer = self._vr_display.render_frame(
-                                frame, frame_state.predicted_display_time
+                                frame, frame_state.predicted_display_time,
+                                depth_frame=depth_frame,
+                                hud_status=hud,
                             )
                             layers.append(ctypes.byref(layer))
                         except Exception as e:
@@ -606,6 +626,12 @@ class OpenXRSession:
                     is_tracking=self._right_state.is_tracking,
                     timestamp=self._right_state.timestamp,
                 )
+
+    def update_hud_status(self, is_recording: bool = False, episode: int = 0, frame_count: int = 0) -> None:
+        """Update the HUD overlay status (call from recording scripts)."""
+        self._hud_recording = is_recording
+        self._hud_episode = episode
+        self._hud_frame_count = frame_count
 
     def disconnect(self) -> None:
         """Stop polling and destroy OpenXR session and GL resources."""
