@@ -1,6 +1,10 @@
 # Quest 2 → SO-101 Teleoperation
 
-Control an SO-101 robot arm using a Meta Quest 2 VR right-hand controller with 6DOF end-effector tracking via inverse kinematics.
+Control an SO-101 robot arm using a Meta Quest 2 VR right-hand controller with 6DOF tracking.
+
+Two teleoperation modes are available:
+- **Direct mode** (`teleoperate_direct.py`): Maps controller movements directly to joints. No IK or URDF needed. Works on Windows out of the box.
+- **IK mode** (`teleoperate.py`): Uses inverse kinematics for end-effector control. Requires `placo` (Linux only — does not build on Windows).
 
 ## Hardware Requirements
 
@@ -11,10 +15,13 @@ Control an SO-101 robot arm using a Meta Quest 2 VR right-hand controller with 6
 
 ## Software Requirements
 
-### Windows
-1. **Oculus PC app** (provides OpenXR runtime): https://www.meta.com/quest/setup/
-2. In Oculus app: Enable **Quest Link** under Settings → General
-3. Set Oculus as the active OpenXR runtime (usually automatic)
+### Windows (Tested ✅)
+1. **SteamVR** with Quest Link:
+   - Install **Steam** and **SteamVR** from the Steam Store
+   - Install **Oculus PC app**: https://www.meta.com/quest/setup/
+   - Enable **Quest Link** in Oculus app → Settings → General
+   - SteamVR automatically registers as the OpenXR runtime
+2. **Or** use the Oculus OpenXR runtime directly (set as active runtime in Oculus app)
 
 ### Linux
 1. **Monado** OpenXR runtime: https://monado.freedesktop.org/
@@ -25,27 +32,38 @@ Control an SO-101 robot arm using a Meta Quest 2 VR right-hand controller with 6
 pip install lerobot[quest]
 ```
 
-This installs `pyopenxr>=1.1.0` and `PyOpenGL>=3.1.0` alongside the base LeRobot dependencies.
+This installs `pyopenxr>=1.1.0`, `PyOpenGL>=3.1.0`, and `glfw` alongside the base LeRobot dependencies.
+
+> **Windows note**: The IK-based pipeline (`teleoperate.py`) requires `placo`, which cannot be built on Windows. Use `teleoperate_direct.py` instead, or run on Linux for full IK support.
 
 ## Setup
 
 1. **Connect Quest 2** to PC via USB cable
 2. **Put on the headset** and accept the Quest Link prompt
-3. **Verify Quest Link** is active (you should see the Link home environment)
-4. **Connect SO-101 arm** via USB and note the serial port (e.g., `COM5` on Windows, `/dev/ttyACM0` on Linux)
-5. **Download SO-101 URDF** from https://github.com/TheRobotStudio/SO-ARM100
+3. **Verify Quest Link** is active (you should see the Link home environment or SteamVR home)
+4. **Connect SO-101 arm** via USB and note the serial port (e.g., `COM4` on Windows, `/dev/ttyACM0` on Linux)
+5. **Download SO-101 URDF** from https://github.com/TheRobotStudio/SO-ARM100 (only needed for IK mode)
 
 ## Quick Start
 
-### Teleoperation
+### Direct Teleoperation (Recommended for Windows)
 ```bash
 cd examples/quest_to_so101
-python teleoperate.py
+python teleoperate_direct.py --robot-port COM4
+```
+
+Maps controller position to shoulder/elbow joints and rotation to wrist joints. No URDF or IK solver required.
+
+### IK-Based Teleoperation (Linux)
+```bash
+pip install placo  # Linux only
+cd examples/quest_to_so101
+python teleoperate.py --robot-port COM4
 ```
 
 ### Teleoperation with Camera-to-VR Display
 ```bash
-python teleoperate.py --camera
+python teleoperate_direct.py --robot-port COM4 --camera
 python teleoperate.py --camera --camera-index 1  # Use second USB camera
 ```
 
@@ -136,11 +154,17 @@ OpenXR quad composition layer → Quest 2 headset display
 |-------|----------|
 | "pyopenxr not found" | Run `pip install pyopenxr>=1.1.0` |
 | "PyOpenGL not found" (camera mode) | Run `pip install PyOpenGL>=3.1.0` |
-| "No OpenXR runtime" | Install Oculus app (Windows) or Monado (Linux) |
-| Controller not tracking | Ensure Quest Link is active, headset is on |
-| Arm moves too fast/slow | Adjust `position_scale` in config |
+| "No OpenXR runtime" | Install SteamVR + Oculus app (Windows) or Monado (Linux) |
+| `GraphicsDeviceInvalidError` | SteamVR requires OpenGL binding — ensure `glfw` and `PyOpenGL` are installed |
+| `GraphicsRequirementsCallMissingError` | Internal bug — ensure latest Quest module version |
+| Session stuck at READY (state 2) | Put on the headset — SteamVR needs proximity sensor active to reach FOCUSED |
+| Controller not tracking | Ensure Quest Link is active, headset is on, session reaches FOCUSED (state 5) |
+| Arm moves too fast/slow | Adjust `position_scale` in config or `--speed` in direct mode |
 | Arm shakes/jitters | Increase `smoothing_alpha` (e.g., 0.3-0.5) |
 | IK solver fails | Reduce `MAX_EE_STEP_M`, check URDF path |
-| Robot doesn't move | Check serial port, verify calibration |
+| `placo` won't install (Windows) | Use `teleoperate_direct.py` instead — placo requires Linux |
+| Robot doesn't move | Check serial port, verify calibration completed |
+| Robot connection hangs | Ensure arm is powered (external power, not just USB), correct COM port |
 | Camera display not showing | Check USB camera connection, try `--camera-index 1` |
 | Camera display laggy | Reduce `camera_width`/`camera_height` or `camera_fps` |
+| "No module 'scservo_sdk'" | Run `pip install feetech-servo-sdk` |
