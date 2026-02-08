@@ -250,9 +250,10 @@ class QuestTeleoperator(Teleoperator):
             delta_pos = raw_pos - self._clutch_reference_pos
             pos_cal = self._calib_rot_inv.apply(delta_pos)
 
-            # Rotation relative to clutch reference, then calibrated
+            # Rotation relative to clutch reference, then calibrated via conjugation
+            # (conjugation correctly re-expresses the rotation in the calibrated frame)
             delta_rot = self._clutch_reference_rot.inv() * raw_rot
-            rot_cal = self._calib_rot_inv * delta_rot
+            rot_cal = self._calib_rot_inv * delta_rot * self._calib_rot_inv.inv()
 
             # Apply EMA smoothing
             pos_cal = self._apply_position_smoothing(pos_cal)

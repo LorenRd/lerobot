@@ -11,12 +11,12 @@ Controls:
   - Grip trigger (squeeze): Close gripper. Release to open.
   - A button: Exit program
 
-Mapping:
-  - Controller X (left/right) → shoulder_pan
-  - Controller Y (up/down) → shoulder_lift
-  - Controller Z (forward/back) → elbow_flex
-  - Controller pitch → wrist_flex
-  - Controller yaw → wrist_roll
+Mapping (after VR→Robot frame transform):
+  - Hand forward/back (robot X) → elbow_flex
+  - Hand left/right (robot Y) → shoulder_pan
+  - Hand up/down (robot Z) → shoulder_lift
+  - Wrist pitch (about robot Y) → wrist_flex
+  - Wrist roll (about robot X) → wrist_roll
 
 Usage:
   python teleoperate_direct.py --robot-port COM4
@@ -31,6 +31,27 @@ import time
 import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+
+def _rotation_to_euler_xyz(rot) -> np.ndarray:
+    """Extract extrinsic XYZ Euler angles (roll, pitch, yaw) from Rotation.
+
+    Returns array [roll_about_X, pitch_about_Y, yaw_about_Z] in radians.
+    Unlike rotvec components, these are independent single-axis rotations
+    that correctly decompose combined wrist orientations.
+    """
+    R = rot.as_matrix()
+    cy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    if cy > 1e-6:
+        roll = np.arctan2(R[2, 1], R[2, 2])
+        pitch = np.arctan2(-R[2, 0], cy)
+        yaw = np.arctan2(R[1, 0], R[0, 0])
+    else:
+        # Gimbal lock
+        roll = np.arctan2(-R[1, 2], R[1, 1])
+        pitch = np.pi / 2 if R[2, 0] < 0 else -np.pi / 2
+        yaw = 0.0
+    return np.array([roll, pitch, yaw])
 
 
 def main():
@@ -55,6 +76,10 @@ def main():
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
     from lerobot.teleoperators.quest import QuestTeleoperator, QuestTeleoperatorConfig
+    from lerobot.teleoperators.quest.coordinate_transform import (
+        vr_to_robot_position,
+        vr_to_robot_rotation,
+    )
     from lerobot.utils.rotation import Rotation
 
     # Initialize robot
@@ -137,18 +162,28 @@ def main():
                 if not was_enabled:
                     home_joints = {m: current_joints[m] for m in motor_names}
 
-                # Extract rotation vector (radians) → degrees
-                rotvec = rot.as_rotvec()
-                rot_deg = np.degrees(rotvec)
+                # Transform from VR (Y-up) frame to robot (Z-up) frame
+                pos_robot = vr_to_robot_position(pos)
+                rot_robot = vr_to_robot_rotation(rot)
+
+                # Extract independent Euler angles in robot frame (radians → degrees)
+                # [0]=roll (about X/forward), [1]=pitch (about Y/left), [2]=yaw (about Z/up)
+                euler_deg = np.degrees(_rotation_to_euler_xyz(rot_robot))
+
+                # Noise deadzone: ignore sub-2mm hand tremor
+                if np.linalg.norm(pos_robot) < 0.002:
+                    pos_robot = np.zeros(3)
 
                 # Proportional mapping: joint = home + displacement * scale
-                # pos is displacement from clutch reference (meters), not velocity
+                # Robot X (forward/back) → elbow_flex (reach)
+                # Robot Y (left/right) → shoulder_pan (sweep)
+                # Robot Z (up/down) → shoulder_lift (height)
                 mapped = {
-                    "shoulder_pan":  home_joints["shoulder_pan"]  + pos[0] * pos_scale,
-                    "shoulder_lift": home_joints["shoulder_lift"] - pos[1] * pos_scale,  # negated: hand up → arm up
-                    "elbow_flex":    home_joints["elbow_flex"]    - pos[2] * pos_scale,
-                    "wrist_flex":    home_joints["wrist_flex"]    + rot_deg[0] * rot_scale,
-                    "wrist_roll":    home_joints["wrist_roll"]    + rot_deg[2] * rot_scale,
+                    "shoulder_pan":  home_joints["shoulder_pan"]  - pos_robot[1] * pos_scale,
+                    "shoulder_lift": home_joints["shoulder_lift"] - pos_robot[2] * pos_scale,
+                    "elbow_flex":    home_joints["elbow_flex"]    + pos_robot[0] * pos_scale,
+                    "wrist_flex":    home_joints["wrist_flex"]    + euler_deg[1] * rot_scale,
+                    "wrist_roll":    home_joints["wrist_roll"]    + euler_deg[0] * rot_scale,
                 }
 
                 # Clamp to limits
